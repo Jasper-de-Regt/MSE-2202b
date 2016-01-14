@@ -16,7 +16,7 @@
 const unsigned int numberOfLeds = 4;                              // the number of leds
 
 // these are the pin assignments. These assignments need to match the real world connections
-const unsigned int ledPin[] = {4, 5, 6, 7, 8, 9};               // the microcontroller pin -> led connections from left to right
+const unsigned int ledPin[] = {4, 5, 6, 7, 8, 9};               // the microcontroller pin -> led connections from left to right. You will only use as many pins as you have number of LEDS
 const unsigned int potentiometerPin = 14;                         // assigns an analog pin to the potentiometer. Note that pins above 13 are analog pins. So potentiometerPin-14=Apin. The dial type pot is pin P4 on J2
 const unsigned int switchPin = 3;                                // Assigns a digital pin to the toggle switch. Toggle S1A is switch 1, Up is high, down is low
 const unsigned int pushButtonPin = 2;                            // Assigns a digital pin to the pushbutton. Use PB1 on JP4
@@ -35,14 +35,14 @@ unsigned int ledStateChangeDelay = 300;                           // the delay b
 unsigned long previousMillis = 0;                                 // the LEDs were last updated at this millis(), if millis()-previousMillis>ledStateChangeDelay then its time do update the LEDs again
 
 // Button debounce stuff
-bool previousButtonIsPressed = false;        //stores the previous buttonIsPressed condition
+bool previousButtonIsPressed = false;                     //stores the previous buttonIsPressed state. Stores what the button's state was after the last time there was a change in state
 unsigned long previousButtonStateChangeTime = 0;        // stores the last millis() that the buttonIsPressed condition changed
-int tempLedStateChangeDelay;                             // Store the new ledSTateDelay while we hold the button down, then updates when we let go
+unsigned int tempLedStateChangeDelay;                             // Updates with how long you hold the pushbutton down for. When you let go (and if it is greater than debounce), it becomes the new ledStateChangeDelay
 
 // Serial stuff
 unsigned long watchDog = 0;                         // tracks the last time that serial was received
-#define commentsForSerialMonitor                    // this will print out master/slave status and delay value over serial to watch over serial monitor
-//#define serialOutLedStateChangeDelay
+#define commentsForSerialMonitor                    // defining this will print out master/slave status and delay value over serial to watch over serial monitor
+//#define serialOutLedStateChangeDelay              //definint this will send out a single byte word (8bit) containing the ledStateChangeDelay in mS. A 1 byte word has value 0-255
 // end of global variables
 
 //**************************************************************************************************************************************************************************************************************//
@@ -51,22 +51,22 @@ unsigned long watchDog = 0;                         // tracks the last time that
 void setup() {
   // put your setup code here, to run once:
 
-  // setup led pins stored in ledPin[] as output pins. This code works for any number of leds.
+  // setup led pins stored in ledPin[] as output pins. This code works for any number of leds as long as there are enough pins stores in the ledPin array
   for (int i = 0; i < numberOfLeds; i++) {
     pinMode(ledPin[i], OUTPUT);
   }
   // other pin assignments
-  pinMode(potentiometerPin, INPUT);
-  pinMode(pushButtonPin, INPUT_PULLUP);        // Note that the pushbutton is a pull down button so we can use the AtMega internal pullup resistor
-  pinMode(switchPin, INPUT_PULLUP);
-  pinMode(onBoardLED, OUTPUT);
-  myServo.attach(servoPin);        // attaches the servo class object to an output pin
+  pinMode(potentiometerPin, INPUT);             // sets the potentiometer pin as an input pin
+  pinMode(pushButtonPin, INPUT_PULLUP);        // Note that the pushbutton is a pull down button, so we need to pull up this input. INPUT_PULLUP activates the internal pullup resistor
+  pinMode(switchPin, INPUT_PULLUP);            // INPUT_PULLUP is probably not needed since this switch switches between gnd and +5v. The only time the pullup has any effect is when the switch is moving (I assume its a break before make switch)
+  pinMode(onBoardLED, OUTPUT);                 // sets the onboard led as an output pin. Because why not.
+  myServo.attach(servoPin);                     // attaches the servo class object to an output pin
 
   Serial.begin(9600);        // pours a bowl of serial for troubleshooting and communications
-  ledState[0] = true;        // set the first led state
+  ledState[0] = true;        // set the first (far left) led state. We need to start somewhere in the blink pattern.
 
   // this function will populate the array of servoPos[] angles with angles from 0-180
-  // The angles will be set in equal intervals. 4 LEDs/Positions would result in 0-60-120-180
+  // The angles will be set in equal intervals. 4 LEDs/Positions would result in 0-60-120-180.
   for (int i = 0; i < numberOfLeds; i++) {
     servoPos[i] = i * (180 / (numberOfLeds - 1));
   }
@@ -78,18 +78,20 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  // Planning on receiving a serial message on a regular basis
-  // every time we receive a serial message we reset a timer.
-  // If the counter expires (>1000mS) then we just read the switches/pot/button
+// So the plan is to receive Serial words on a regular basis.
+// If we havnt received anything in 1000mS; then we set the ledStateChangeInterval based on the switch/potentiometer/button combination and we can also send out the ledStateChangeInterval over serial
+// if we have received serial in the last 1000mS, then set the ledStateChangeDelay based on the value of the serial.received message
+// So as long as you send it serial at least every second; this uC will stay in "Slave mode." if its not receiving it will go to "master mode"
+// Serial.available() basically resets a watchdog timer, if the timer expires we use the switch/pot/button combo
   if (Serial.available()) {
     ledStateChangeDelay = Serial.read();      // set the ledStateChangeDelay based on the serial value
-    watchDog = millis();                      // reset watchdog
+    watchDog = millis();                      // resets the watchdog
     digitalWrite(onBoardLED, HIGH);           // if we are in receiving serial mode, turn on the on board led
   }
   // if the watchdog has expired, use the buttons and switches
   else if ((millis() - watchDog) > 1000) {
-    digitalWrite(onBoardLED, LOW);    // turn off the LED if not in serial receive mode
-    if (digitalRead(switchPin) == LOW) {    // if the sliding switch is down, set ledStateChangeDelay based on potentiometer
+    digitalWrite(onBoardLED, LOW);          // turn off the LED if not in serial receive mode
+    if (!digitalRead(switchPin)) {    // if the sliding switch is down, set ledStateChangeDelay based on potentiometer
       ledStateChangeDelay = map(analogRead(potentiometerPin), 0, 1023, 0, 100); // reads the potentiometer as a value from 0-1023 and maps it to a value of 0-100, then sets that 0-100 value as ledStateChangeDelay
     }
     else {    // else if the sliding switch is up, set ledStateChangeDelay based on button press
@@ -106,8 +108,6 @@ void loop() {
   Serial.write(reading);
 #endif
 }
-
-
 else {  // if the watchdog has not yet expired we are in slave mode
 #ifdef commentsForSerialMonitor
   Serial.println();
@@ -174,11 +174,11 @@ if ((millis() - previousMillis) > (ledStateChangeDelay + ((stateCounter % 2) * 2
 // this function polls the pushbutton, debounces it, and updates ledStateChangeDelay with the amount of time that the button was held down
 void debouncePushButtonandUpdateDelayBasedOnPress () {
   // this is currently written for a pull up resistor/pull down switch. To reverse that logic remove the ! in the next line, update pinMode to remove the pullup, and add a pulldown resisor
-bool buttonIsPressed = !digitalRead(pushButtonPin);        //stores whether the button is currently pressed. pressed results in a true
+bool buttonIsPressed = !digitalRead(pushButtonPin);        //stores whether the button is currently pressed or not. pressed results in a true
       if (buttonIsPressed != previousButtonIsPressed) {        // if there is a change in buttonIsPressed condition, remember the current time
         previousButtonStateChangeTime = millis();
       }
-      if ((millis() - previousButtonStateChangeTime) > 30) {        // the 50 is the debounce time in mS. The button needs to have been in the previous state for this many mS in order to register it as a valid buttonState
+      if ((millis() - previousButtonStateChangeTime) > 30) {        // the 30 is the debounce time in mS. The button needs to have been in the previous state for this many mS in order to register it as a valid buttonState
         if (buttonIsPressed) {                                              // if the button pressed, set a new ledStateChangeDelay
           tempLedStateChangeDelay = ((millis() - previousButtonStateChangeTime)) / 3;
           //ledStateChangeDelay = ((millis() - previousButtonStateChangeTime))/3;
@@ -187,7 +187,7 @@ bool buttonIsPressed = !digitalRead(pushButtonPin);        //stores whether the 
           ledStateChangeDelay = tempLedStateChangeDelay;
         }
       }
-      else  previousButtonIsPressed = buttonIsPressed;      // end of function, updates previousButtonIsPressed state with the current stat
+      else  previousButtonIsPressed = buttonIsPressed;      // end of function, updates previousButtonIsPressed state with the current state
 }
 
 
