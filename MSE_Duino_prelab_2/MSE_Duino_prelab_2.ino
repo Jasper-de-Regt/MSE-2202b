@@ -14,14 +14,14 @@
 // To change to x number of leds, you will just have to switch the first two lines of code
 // You just need to enter the number of leds, and their pins
 
-const unsigned int numberOfLeds = 9;                                // this global var represents the number of leds
-const unsigned int ledPin[numberOfLeds] = {2, 3, 4, 5, 6, 7, 8, 9, 10};       // these ints represent the pins the leds are connected to. Enter the pin numbers in led order from left to right (or right to left)
-unsigned long interval = 100;                                        // sets the "delay" between changes in state(this code doesnt use delay)
+const unsigned int numberOfLeds = 6;                                // this global var represents the number of leds
+const unsigned int ledPin[] = {4, 5, 6, 7, 8, 9, 10};           // these ints represent the pins the leds are connected to. Enter the pin numbers in led order from left to right (or right to left). We only use as many pins as we have leds
+unsigned long interval = 200;                                        // sets the "delay" between changes in state(this code doesnt use delay)
 
-bool arrayOfStates[numberOfLeds * 3];                                      // these bools represent the state of the leds (including the "invisible" leds)
+bool arrayOfStates[numberOfLeds * 3];                               // these bools represent the state of the leds (including the "invisible" leds from notes)
 bool dir;                                                           // (direction) this bool determines which way the leds are moving. False is left to right, true is right to left
-unsigned long previousMillis(0);                                    // saves the time at which we previously ran through loop
-
+unsigned long previousMillis(0);                                    // saves the time at which we previously updated led states
+#define commentsForSerialMonitor;                                   // defining this will print usefull messages to the serial monitor. Comment this out if you do not want those messages
 
 void setup() {
   // put your setup code here, to run once:
@@ -31,7 +31,9 @@ void setup() {
     pinMode(ledPin[i], OUTPUT);
   }
 
+#ifdef commentsForSerialMonitor
   Serial.begin(9600);                                              // pour a bowl of serial. The leds hurt my eyes so I'll just use serial monitor for testing.
+#endif
 
   // sets the first third of array elements to true
   for (int i = 0; i < numberOfLeds; i++) {
@@ -43,18 +45,20 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-  // if more than interval has expired we do stuff, if not we run through loop again
+  // if more than interval has expired we do blinky lights stuff, if not we run through loop again
   if (millis() - previousMillis >= interval) {
-    // save the last time you blinked the LED
 
+    // save the last time you blinked the LED
     previousMillis = millis();
 
+#ifdef commentsForSerialMonitor
     // this little function will print the arrayOfStates bools to serial monitor (because leds hurt my eyes)
     Serial.println();
     for (int i = 0; i < (numberOfLeds * 3); i++) {
       Serial.print(arrayOfStates[i]);
-      Serial.print("\t");
+      Serial.print("");
     }
+#endif
 
     // this little function updates led states based on its respective bool
     for (int i = 0; i < numberOfLeds; i++) {
