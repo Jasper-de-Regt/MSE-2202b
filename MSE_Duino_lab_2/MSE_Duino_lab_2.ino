@@ -13,7 +13,7 @@
 // Global Variables
 
 // to change number of leds, just update the first line of code
-const unsigned int numberOfLeds = 4;                              // the number of leds
+const unsigned int numberOfLeds = 6;                              // the number of leds
 
 // these are the pin assignments. These assignments need to match the real world connections
 const unsigned int ledPin[] = {4, 5, 6, 7, 8, 9};               // the microcontroller pin -> led connections from left to right. You will only use as many pins as you have number of LEDS
@@ -31,18 +31,17 @@ Servo myServo;                                                     // creates a 
 // LED blink stuff
 bool ledState[numberOfLeds];                                      // an array of bools that describes the respective led state (true/false; on/off)
 unsigned int stateCounter = 0;                                    // tracks which state occurence we are in. State corresponds to Exercise 1 chart in Lab Manual // numberOfPossibleStates = (numberOfLeds-1)*4
-unsigned int ledStateChangeDelay = 300;                           // the delay between ledstate updates
-unsigned long previousMillis = 0;                                 // the LEDs were last updated at this millis(), if millis()-previousMillis>ledStateChangeDelay then its time do update the LEDs again
+unsigned int ledInterval = 255;                           // the delay use for the led change loop
+unsigned int buttonPotInterval = 255;                            // the delay as set by the buttons/pot
+unsigned long previousMillis = 0;                                 // the LEDs were last updated at this millis(), if millis()-previousMillis>ledInterval then its time do update the LEDs again
 
 // Button debounce stuff
 bool previousButtonIsPressed = false;                     //stores the previous buttonIsPressed state. Stores what the button's state was after the last time there was a change in state
 unsigned long previousButtonStateChangeTime = 0;        // stores the last millis() that the buttonIsPressed condition changed
-unsigned int tempLedStateChangeDelay;                             // Updates with how long you hold the pushbutton down for. When you let go (and if it is greater than debounce), it becomes the new ledStateChangeDelay
+unsigned int templedInterval;                             // Updates with how long you hold the pushbutton down for. When you let go (and if it is greater than debounce), it becomes the new ledInterval
 
 // Serial stuff
 unsigned long watchDog = 0;                         // tracks the last time that serial was received
-#define commentsForSerialMonitor                    // defining this will print out master/slave status and delay value over serial to watch over serial monitor
-//#define serialOutLedStateChangeDelay              //definint this will send out a single byte word (8bit) containing the ledStateChangeDelay in mS. A 1 byte word has value 0-255
 // end of global variables
 
 //**************************************************************************************************************************************************************************************************************//
@@ -60,6 +59,7 @@ void setup() {
   pinMode(pushButtonPin, INPUT_PULLUP);        // Note that the pushbutton is a pull down button, so we need to pull up this input. INPUT_PULLUP activates the internal pullup resistor
   pinMode(switchPin, INPUT_PULLUP);            // INPUT_PULLUP is probably not needed since this switch switches between gnd and +5v. The only time the pullup has any effect is when the switch is moving (I assume its a break before make switch)
   pinMode(onBoardLED, OUTPUT);                 // sets the onboard led as an output pin. Because why not.
+  digitalWrite(onBoardLED, HIGH);               // turns on the onboard led. The watchdog hasnt expired yet when we start the loop, so the led should be on
   myServo.attach(servoPin);                     // attaches the servo class object to an output pin
 
   Serial.begin(9600);        // pours a bowl of serial for troubleshooting and communications
@@ -78,91 +78,82 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
 
-// So the plan is to receive Serial words on a regular basis.
-// If we havnt received anything in 1000mS; then we set the ledStateChangeInterval based on the switch/potentiometer/button combination and we can also send out the ledStateChangeInterval over serial
-// if we have received serial in the last 1000mS, then set the ledStateChangeDelay based on the value of the serial.received message
-// So as long as you send it serial at least every second; this uC will stay in "Slave mode." if its not receiving it will go to "master mode"
-// Serial.available() basically resets a watchdog timer, if the timer expires we use the switch/pot/button combo
+  // if serial is available, update the ledInterval based on the received value and turn on the LED
   if (Serial.available()) {
-    ledStateChangeDelay = Serial.read();      // set the ledStateChangeDelay based on the serial value
+    ledInterval = Serial.read();      // set the ledInterval based on the serial value
     watchDog = millis();                      // resets the watchdog
     digitalWrite(onBoardLED, HIGH);           // if we are in receiving serial mode, turn on the on board led
   }
-  // if the watchdog has expired, use the buttons and switches
+  // if the watchdog has expired, turn off the led13 and just set the ledInterval internally based on the buttonPotInterval
   else if ((millis() - watchDog) > 1000) {
-    digitalWrite(onBoardLED, LOW);          // turn off the LED if not in serial receive mode
-    if (!digitalRead(switchPin)) {    // if the sliding switch is down, set ledStateChangeDelay based on potentiometer
-      ledStateChangeDelay = map(analogRead(potentiometerPin), 0, 1023, 0, 100); // reads the potentiometer as a value from 0-1023 and maps it to a value of 0-100, then sets that 0-100 value as ledStateChangeDelay
-    }
-    else {    // else if the sliding switch is up, set ledStateChangeDelay based on button press
-      debouncePushButtonandUpdateDelayBasedOnPress();
-    }
-  
-#ifdef commentsForSerialMonitor
-  Serial.println();
-  Serial.print("in MASTER mode. ledStateChangeDelay is: ");
-  Serial.print(ledStateChangeDelay);
-#endif
-#ifdef serialOutLedStateChangeDelay
-  byte reading = ledStateChangeDelay;
+    digitalWrite(onBoardLED, LOW);
+    ledInterval = buttonPotInterval;
+  }
+
+
+  // this code is always sending out the buttonPotInterval if someone wants to listen; great. If not then its still ok.
+  byte reading = buttonPotInterval;
   Serial.write(reading);
-#endif
-}
-else {  // if the watchdog has not yet expired we are in slave mode
-#ifdef commentsForSerialMonitor
-  Serial.println();
-  Serial.print("in SLAVE mode. ledStateChangeDelay is: ");
-  Serial.print(ledStateChangeDelay);
-#endif
-}
 
-// if enough time has passed, update blinky lights stuff. recall that the lab asks for different time intervals
-// if stateCounter == even; time required is short = ledStateChangeDelay            if stateCounter == odd; time required is longer = ledStateChangeDelay + 1*2*ledStateChangeDelay  (which = 3*ledStateChangeDelay)
-if ((millis() - previousMillis) > (ledStateChangeDelay + ((stateCounter % 2) * 2 * ledStateChangeDelay)))  {
-  // if at end of possible states, reset stateCounter
-  if (stateCounter == ((numberOfLeds - 1) * 4)) {
-    stateCounter = 0;
+
+// these functions set the buttonPotDelay based on the sliding switch / Potentiometer / Pushbutton as described in the lab manual
+  if (!digitalRead(switchPin)) {    // if the sliding switch is down, set ledInterval based on potentiometer
+    buttonPotInterval = map(analogRead(potentiometerPin), 0, 1023, 0, 255); // reads the potentiometer as a value from 0-1023 and maps it to a value of 0-255, then sets that 0-255 value as ledInterval
   }
-  if (!(stateCounter % 2)) {                                        // if stateCounter even then we want to turn on only a single LED;
-    if (stateCounter < ((numberOfLeds - 1) * 2)) {                        // if in the first half of possible states then the leds are moving left to right
-      for (int i = 0; i < numberOfLeds; i++) {                                  // turns off all the LEDS
-        ledState[i] = false;
-      }
-      ledState[stateCounter / 2] = true;                                        // turns on the single led that we want
-      myServo.write(servoPos[stateCounter / 2]);                                //turns the servo towards the single LED that is on
-    }
-    else if (stateCounter >= ((numberOfLeds - 1) * 2)) {                  // else if second half of possible states then the leds are moving right to left
-      for (int i = 0; i < numberOfLeds; i++) {                                  // turns off all the LEDS
-        ledState[i] = false;
-      }
-      ledState[(((numberOfLeds - 1) * 4) - stateCounter) / 2] = true;           // turns on the single led that we want
-      myServo.write(servoPos[(((numberOfLeds - 1) * 4) - stateCounter) / 2]);   //turns the servo towards the single LED that is on
-    }
+  else {    // else if the sliding switch is up, set ledInterval based on button press
+    buttonPotInterval = debouncePushButtonandUpdateDelayBasedOnPress();
   }
-  if (stateCounter % 2) {                                            // else if the statecounter is odd, then we want to turn on the LED that is either to the right or to the left of the LED that is already on.
-    if (stateCounter < ((numberOfLeds - 1) * 2)) {                         // if in the first half of possible states then the leds are moving left to right
-      for (int i = numberOfLeds; i >= 0; i--) {                            // so we will see which LED is on, then turn on the LED to the right of the LED that is already on
-        if (ledState[i] == true) {
-          ledState[i + 1] = true;
+
+
+
+
+  // if enough time has passed, update blinky lights stuff. recall that the lab asks for different time intervals
+  // if stateCounter == even; time required is short = ledInterval            if stateCounter == odd; time required is longer = ledInterval + 1*2*ledInterval  (which = 3*ledInterval)
+  if ((millis() - previousMillis) > (ledInterval + ((stateCounter % 2) * 2 * ledInterval)))  {
+    // if at end of possible states, reset stateCounter
+    if (stateCounter == ((numberOfLeds - 1) * 4)) {
+      stateCounter = 0;
+    }
+    if (!(stateCounter % 2)) {                                        // if stateCounter even then we want to turn on only a single LED;
+      if (stateCounter < ((numberOfLeds - 1) * 2)) {                        // if in the first half of possible states then the leds are moving left to right
+        for (int i = 0; i < numberOfLeds; i++) {                                  // turns off all the LEDS
+          ledState[i] = false;
+        }
+        ledState[stateCounter / 2] = true;                                        // turns on the single led that we want
+        myServo.write(servoPos[stateCounter / 2]);                                //turns the servo towards the single LED that is on
+      }
+      else if (stateCounter >= ((numberOfLeds - 1) * 2)) {                  // else if second half of possible states then the leds are moving right to left
+        for (int i = 0; i < numberOfLeds; i++) {                                  // turns off all the LEDS
+          ledState[i] = false;
+        }
+        ledState[(((numberOfLeds - 1) * 4) - stateCounter) / 2] = true;           // turns on the single led that we want
+        myServo.write(servoPos[(((numberOfLeds - 1) * 4) - stateCounter) / 2]);   //turns the servo towards the single LED that is on
+      }
+    }
+    if (stateCounter % 2) {                                            // else if the statecounter is odd, then we want to turn on the LED that is either to the right or to the left of the LED that is already on.
+      if (stateCounter < ((numberOfLeds - 1) * 2)) {                         // if in the first half of possible states then the leds are moving left to right
+        for (int i = numberOfLeds; i >= 0; i--) {                            // so we will see which LED is on, then turn on the LED to the right of the LED that is already on
+          if (ledState[i] == true) {
+            ledState[i + 1] = true;
+          }
+        }
+      }
+      else if (stateCounter >= ((numberOfLeds - 1) * 2)) {                  // else if its in the second half of possible states then the LEDS are moving right to left
+        for (int i = 0; i < numberOfLeds; i++) {                            // so we will see which LED is on, then turn on the LED to the left of the LED that is already on
+          if (ledState[i] == true) {
+            ledState[i - 1] = true;
+          }
         }
       }
     }
-    else if (stateCounter >= ((numberOfLeds - 1) * 2)) {                  // else if its in the second half of possible states then the LEDS are moving right to left
-      for (int i = 0; i < numberOfLeds; i++) {                            // so we will see which LED is on, then turn on the LED to the left of the LED that is already on
-        if (ledState[i] == true) {
-          ledState[i - 1] = true;
-        }
-      }
+
+    for (int i = 0; i < numberOfLeds; i++) {        // each LED has a respective bool. This function will turn the LED on or off depending on that bool
+      digitalWrite(ledPin[i], ledState[i]);
     }
-  }
 
-  for (int i = 0; i < numberOfLeds; i++) {        // each LED has a respective bool. This function will turn the LED on or off depending on that bool
-    digitalWrite(ledPin[i], ledState[i]);
+    previousMillis = millis();        // stores the last time that the LEDs were updated.
+    stateCounter++;                   // increments stateCounter, so next time we will update the LEDs to the next state
   }
-
-  previousMillis = millis();        // stores the last time that the LEDs were updated.
-  stateCounter++;                   // increments stateCounter, so next time we will update the LEDs to the next state
-}
 }
 // end of loop
 
@@ -171,28 +162,41 @@ if ((millis() - previousMillis) > (ledStateChangeDelay + ((stateCounter % 2) * 2
 
 // start of functions
 
-// this function polls the pushbutton, debounces it, and updates ledStateChangeDelay with the amount of time that the button was held down
-void debouncePushButtonandUpdateDelayBasedOnPress () {
+// this function polls the pushbutton, debounces it, and returns how long the button was held down. If the button wasn't held down long enough
+// then the function will just return the current buttonPotInterval. If the value were to exceed 255mS then it will just return 255mS
+unsigned int debouncePushButtonandUpdateDelayBasedOnPress () {
   // this is currently written for a pull up resistor/pull down switch. To reverse that logic remove the ! in the next line, update pinMode to remove the pullup, and add a pulldown resisor
-bool buttonIsPressed = !digitalRead(pushButtonPin);        //stores whether the button is currently pressed or not. pressed results in a true
-      if (buttonIsPressed != previousButtonIsPressed) {        // if there is a change in buttonIsPressed condition, remember the current time
-        previousButtonStateChangeTime = millis();
+  bool buttonIsPressed = !digitalRead(pushButtonPin);        //stores whether the button is currently pressed or not. pressed results in a true
+  if (buttonIsPressed != previousButtonIsPressed) {        // if there is a change in buttonIsPressed condition, remember the current time
+    previousButtonStateChangeTime = millis();
+  }
+  if ((millis() - previousButtonStateChangeTime) > 30) {        // the 30 is the debounce time in mS. The button needs to have been in the previous state for this many mS in order to register it as a valid buttonState
+    if (buttonIsPressed) {                                              // if the button pressed, set a new ledInterval
+      templedInterval = ((millis() - previousButtonStateChangeTime)) / 3;
+      previousButtonIsPressed = buttonIsPressed;
+      return buttonPotInterval;
+    }
+    else if (!(buttonIsPressed)) {
+      //buttonPotInterval = templedInterval;///////////////////
+      previousButtonIsPressed = buttonIsPressed;
+      if (templedInterval <= 255) {
+        return templedInterval;
       }
-      if ((millis() - previousButtonStateChangeTime) > 30) {        // the 30 is the debounce time in mS. The button needs to have been in the previous state for this many mS in order to register it as a valid buttonState
-        if (buttonIsPressed) {                                              // if the button pressed, set a new ledStateChangeDelay
-          tempLedStateChangeDelay = ((millis() - previousButtonStateChangeTime)) / 3;
-          //ledStateChangeDelay = ((millis() - previousButtonStateChangeTime))/3;
-        }
-        if (!(buttonIsPressed)) {
-          ledStateChangeDelay = tempLedStateChangeDelay;
-        }
+      else {
+        return 255;
       }
-      else  previousButtonIsPressed = buttonIsPressed;      // end of function, updates previousButtonIsPressed state with the current state
+    }
+  }
+  else  { // if note enough debounce time has passes, just pass the old buttonPotInterval
+    //previousButtonIsPressed = buttonIsPressed;      // end of function, updates previousButtonIsPressed state with the current state
+    previousButtonIsPressed = buttonIsPressed;
+    return buttonPotInterval;
+  }
 }
 
 
 
 
 
-  
+
 
